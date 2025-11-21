@@ -1,0 +1,38 @@
+# --- Build artifacts ---
+*.o
+*.out
+*.exe
+*.a
+*.so
+*.lo
+*.la
+
+# --- Binaries directory ---
+bin/
+*/bin/
+
+# --- Backup & swap files ---
+*~
+*.swp
+*.swo
+
+# --- MacOS junk ---
+.DS_Store
+
+# --- Linux filesystem junk ---
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Makefile intermediates ---
+*.d
+
+# --- VSCode / CLion / editors ---
+.vscode/
+.idea/
+*.iml
+
+# --- Compiled or temporary files from testing ---
+core
+a.out
