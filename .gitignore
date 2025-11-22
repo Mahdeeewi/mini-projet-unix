@@ -36,3 +36,4 @@ Thumbs.db
 # --- Compiled or temporary files from testing ---
 core
 a.out
+users.txt
