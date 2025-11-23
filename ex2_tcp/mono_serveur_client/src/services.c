@@ -39,12 +39,16 @@ ssize_t read_line(int fd, char *buf, size_t maxlen) {
         rc = read(fd, &c, 1);
         if (rc == 1) {
             if (c == '\n') {
+                /* fin de ligne : on s'arrête, mais on ne note pas '\n' dans le buffer */
                 break;
             }
             buf[n++] = c;
         } else if (rc == 0) {
-            /* Connexion fermée par le pair */
-            break;
+            /* Connexion fermée par le pair AVANT toute donnée */
+            if (n == 0)
+                return 0;   /* EOF réel : socket fermée */
+            else
+                break;      /* on renvoie la ligne partielle lue avant la fermeture */
         } else {
             if (errno == EINTR)
                 continue;   /* Interrompu par un signal, on continue */
@@ -53,6 +57,14 @@ ssize_t read_line(int fd, char *buf, size_t maxlen) {
     }
 
     buf[n] = '\0';
+
+    /* Cas particulier : ligne vide ("\\n") -> n == 0 ici.
+       On NE VEUT PAS confondre ça avec "connexion fermée", donc on
+       renvoie un succès (>0) pour que l'appelant ne pense pas à un EOF. */
+    if (n == 0) {
+        return 1;  /* ligne vide lue avec succès */
+    }
+
     return n;
 }
 
