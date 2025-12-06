@@ -292,7 +292,7 @@ int main(int argc, char *argv[]) {
     ServiceInfo services[MAX_SERVICES];
     int nb_services = 0;
 
-    printf("\n=== Services disponibles (reçus du serveur central) ===\n");
+    
 
     while (1) {
         if (read_line(sockfd, buf, sizeof(buf)) <= 0) {
@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
                          "%s", name);
                 nb_services++;
             }
-            printf("Service %d : %s (port %d)\n", id, name, port);
+           
         } else {
             printf("Ligne de service invalide : %s\n", buf);
         }
