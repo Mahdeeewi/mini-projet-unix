@@ -1,9 +1,9 @@
-// fichier : ex2_tcp/gui_client/src/gui_main.c
-// Client GUI : une fenêtre, un GtkStack avec 3 pages (Login, Menu, Service)
-// Utilise de vrais appels TCP vers le serveur central et les serveurs de services.
+// ================================================================
+//   GUI CLIENT — MULTI-SERVERS / MULTI-SERVICES VERSION
+//   With "0) Quitter" button and warnings fixed
+// ================================================================
 
 #include <gtk/gtk.h>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,8 +15,6 @@
 #include <arpa/inet.h>
 #include <time.h>
 
-/* === Constantes réseau === */
-
 #define BUF_SIZE     1024
 #define PORT_CENTRAL 5000
 #define MAX_SERVICES 10
@@ -27,8 +25,7 @@ typedef struct {
     int  port;
 } ServiceInfo;
 
-/* === Structure globale de l'application === */
-
+/* GUI + session info */
 typedef struct {
     GtkWidget   *stack;
     GtkWidget   *entry_ip;
@@ -37,18 +34,16 @@ typedef struct {
     GtkWidget   *label_status;
     GtkWidget   *textview_output;
 
-    /* Infos réseau / session */
-    gchar       *server_ip;                 /* IP du serveur central / services */
+    gchar       *server_ip;
     ServiceInfo  services[MAX_SERVICES];
     int          nb_services;
-    time_t       session_start;             /* moment de l'authentification */
+    time_t       session_start;
+
 } AppWidgets;
 
-/* =========================================================================
- *                       FONCTIONS UTILITAIRES RÉSEAU
- * ========================================================================= */
-
-/* Lecture d'une ligne terminée par '\n', comme dans services.c (version corrigée) */
+/* ============================================================
+   read_line_fd — identical to previous version
+   ============================================================ */
 static ssize_t read_line_fd(int fd, char *buf, size_t maxlen) {
     ssize_t n = 0;
     char c;
@@ -63,18 +58,14 @@ static ssize_t read_line_fd(int fd, char *buf, size_t maxlen) {
             if (c == '\n')
                 break;
         } else if (rc == 0) {
-            /* connexion fermée */
-            if (n == 0)
-                return 0;  /* aucune donnée lue */
-            break;         /* on renvoie ce qu'on a déjà lu */
+            if (n == 0) return 0;
+            break;
         } else {
-            if (errno == EINTR)
-                continue;
+            if (errno == EINTR) continue;
             return -1;
         }
     }
 
-    /* On retire éventuellement le '\n' final */
     if (n > 0 && buf[n - 1] == '\n')
         n--;
 
@@ -82,29 +73,29 @@ static ssize_t read_line_fd(int fd, char *buf, size_t maxlen) {
     return n;
 }
 
-/* Connexion générique à un service ip + port */
+/* ============================================================
+   Connect to a service
+   ============================================================ */
 static int connect_to_service(const char *ip, int port, char *errbuf, size_t errlen) {
-    int sockfd;
-    struct sockaddr_in serv_addr;
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        snprintf(errbuf, errlen, "socket() a échoué : %s", strerror(errno));
+        snprintf(errbuf, errlen, "socket() failed: %s", strerror(errno));
         return -1;
     }
 
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port   = htons((unsigned short)port);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons((unsigned short)port);
 
-    if (inet_aton(ip, &serv_addr.sin_addr) == 0) {
-        snprintf(errbuf, errlen, "Adresse IP invalide : %s", ip);
+    if (inet_aton(ip, &addr.sin_addr) == 0) {
+        snprintf(errbuf, errlen, "Invalid IP: %s", ip);
         close(sockfd);
         return -1;
     }
 
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        snprintf(errbuf, errlen, "connect() a échoué : %s", strerror(errno));
+    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        snprintf(errbuf, errlen, "connect() failed: %s", strerror(errno));
         close(sockfd);
         return -1;
     }
@@ -112,148 +103,123 @@ static int connect_to_service(const char *ip, int port, char *errbuf, size_t err
     return sockfd;
 }
 
-/* Récupère le port pour un service donné ("DATE", "LS", "CAT", "DUREE") */
+/* Look up a service port */
 static int get_service_port(AppWidgets *app, const char *name) {
-    for (int i = 0; i < app->nb_services; i++) {
+    for (int i = 0; i < app->nb_services; i++)
         if (strcmp(app->services[i].name, name) == 0)
             return app->services[i].port;
-    }
     return -1;
 }
 
-/* Petit helper pour afficher un texte complet dans la textview */
-static void set_textview_text(GtkWidget *textview, const char *text) {
-    GtkTextBuffer *buffer =
-        gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
-    gtk_text_buffer_set_text(buffer, text ? text : "", -1);
+static void set_text(GtkWidget *textview, const char *txt) {
+    GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
+    gtk_text_buffer_set_text(b, txt ? txt : "", -1);
 }
 
-/* =========================================================================
- *                    DIALOGUE DE SAISIE (pour LS / CAT)
- * ========================================================================= */
-
-/* Demande une chaîne de caractères à l'utilisateur via une boîte de dialogue */
-static gchar *prompt_for_text(GtkWindow *parent,
-                              const gchar *title,
-                              const gchar *message) {
-    GtkWidget *dialog = gtk_dialog_new_with_buttons(
-        title,
-        parent,
-        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+/* ============================================================
+   Dialog prompt for LS / CAT
+   ============================================================ */
+static gchar *prompt(GtkWindow *parent, const char *title, const char *msg) {
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        title, parent,
+        GTK_DIALOG_MODAL,
         "_Annuler", GTK_RESPONSE_CANCEL,
         "_Valider", GTK_RESPONSE_OK,
         NULL
     );
 
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *vbox    = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    GtkWidget *label   = gtk_label_new(message);
-    GtkWidget *entry   = gtk_entry_new();
+    GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    GtkWidget *v = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    GtkWidget *lbl = gtk_label_new(msg);
+    GtkWidget *entry = gtk_entry_new();
 
-    gtk_container_set_border_width(GTK_CONTAINER(vbox), 10);
-    gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(vbox), entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(v), lbl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(v), entry, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(box), v);
 
-    gtk_container_add(GTK_CONTAINER(content), vbox);
-    gtk_widget_show_all(dialog);
+    gtk_widget_show_all(dlg);
 
-    gchar *result = NULL;
-
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
-        const gchar *text = gtk_entry_get_text(GTK_ENTRY(entry));
-        if (text)
-            result = g_strdup(text);
+    gchar *res = NULL;
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+        const gchar *t = gtk_entry_get_text(GTK_ENTRY(entry));
+        if (t) res = g_strdup(t);
     }
-
-    gtk_widget_destroy(dialog);
-    return result;  /* peut être NULL si Annuler */
+    gtk_widget_destroy(dlg);
+    return res;
 }
 
-/* =========================================================================
- *                     COMMUNICATION AVEC LE SERVEUR CENTRAL
- * ========================================================================= */
+/* ============================================================
+   Central server authentication + service list
+   ============================================================ */
+static gboolean central_auth(AppWidgets *app,
+                             const char *ip,
+                             const char *login,
+                             const char *pass,
+                             char *err, size_t errlen)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        snprintf(err, errlen, "socket failed: %s", strerror(errno));
+        return FALSE;
+    }
 
-/*
- * Connexion au serveur central, envoi login/password,
- * vérification de la réponse, puis lecture de la liste des services.
- * Remplit app->services[] et app->nb_services.
- * Retourne TRUE en cas de succès, FALSE sinon + message d'erreur.
- */
-static gboolean central_auth_and_get_services(AppWidgets *app,
-                                              const char *ip,
-                                              const char *login,
-                                              const char *passwd,
-                                              char *errbuf,
-                                              size_t errlen) {
-    int sockfd;
-    struct sockaddr_in serv_addr;
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_port   = htons(PORT_CENTRAL);
+
+    if (inet_aton(ip, &a.sin_addr) == 0) {
+        snprintf(err, errlen, "Invalid IP: %s", ip);
+        close(sock);
+        return FALSE;
+    }
+
+    if (connect(sock, (struct sockaddr*)&a, sizeof(a)) < 0) {
+        snprintf(err, errlen, "connect failed: %s", strerror(errno));
+        close(sock);
+        return FALSE;
+    }
+
     char buf[BUF_SIZE];
 
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        snprintf(errbuf, errlen, "socket() a échoué : %s", strerror(errno));
+    /* Send login */
+    snprintf(buf, sizeof(buf), "%s\n", login);
+    if (write(sock, buf, strlen(buf)) < 0) {
+        snprintf(err, errlen, "write(login) failed: %s", strerror(errno));
+        close(sock);
         return FALSE;
     }
 
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port   = htons(PORT_CENTRAL);
-
-    if (inet_aton(ip, &serv_addr.sin_addr) == 0) {
-        snprintf(errbuf, errlen, "Adresse IP invalide : %s", ip);
-        close(sockfd);
+    /* Send password */
+    snprintf(buf, sizeof(buf), "%s\n", pass);
+    if (write(sock, buf, strlen(buf)) < 0) {
+        snprintf(err, errlen, "write(password) failed: %s", strerror(errno));
+        close(sock);
         return FALSE;
     }
 
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        snprintf(errbuf, errlen, "connect() au serveur central a échoué : %s",
-                 strerror(errno));
-        close(sockfd);
-        return FALSE;
-    }
-
-    /* Envoi login + password (format "<texte>\n") */
-    snprintf(buf, sizeof(buf), "%.*s\n", (int)(sizeof(buf) - 2), login);
-    if (write(sockfd, buf, strlen(buf)) < 0) {
-        snprintf(errbuf, errlen, "write(login) a échoué : %s", strerror(errno));
-        close(sockfd);
-        return FALSE;
-    }
-
-    snprintf(buf, sizeof(buf), "%.*s\n", (int)(sizeof(buf) - 2), passwd);
-    if (write(sockfd, buf, strlen(buf)) < 0) {
-        snprintf(errbuf, errlen, "write(password) a échoué : %s", strerror(errno));
-        close(sockfd);
-        return FALSE;
-    }
-
-    /* Réponse "OK" ou "ERR" */
-    if (read_line_fd(sockfd, buf, sizeof(buf)) <= 0) {
-        snprintf(errbuf, errlen,
-                 "Pas de réponse du serveur central lors de l'authentification.");
-        close(sockfd);
+    /* Read response */
+    if (read_line_fd(sock, buf, sizeof(buf)) <= 0) {
+        snprintf(err, errlen, "No response during authentication.");
+        close(sock);
         return FALSE;
     }
 
     if (strcmp(buf, "OK") != 0) {
-        snprintf(errbuf, errlen,
-                 "Authentification refusée par le serveur central.");
-        close(sockfd);
+        snprintf(err, errlen, "Authentication failed.");
+        close(sock);
         return FALSE;
     }
 
-    /* Auth OK : on mémorise l'instant de début de session */
     app->session_start = time(NULL);
-
-    /* Lecture liste des services */
     app->nb_services = 0;
 
+    /* Read service list */
     while (1) {
-        ssize_t n = read_line_fd(sockfd, buf, sizeof(buf));
+        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
         if (n <= 0) {
-            snprintf(errbuf, errlen,
-                     "Connexion fermée pendant la réception des services.");
-            close(sockfd);
+            snprintf(err, errlen, "Connection closed while reading services.");
+            close(sock);
             return FALSE;
         }
 
@@ -261,7 +227,7 @@ static gboolean central_auth_and_get_services(AppWidgets *app,
             break;
 
         if (strcmp(buf, "SERVICES") == 0)
-            continue;  /* ligne d'entête */
+            continue;
 
         int id, port;
         char name[32];
@@ -276,440 +242,363 @@ static gboolean central_auth_and_get_services(AppWidgets *app,
                 app->nb_services++;
             }
         }
-        /* En cas de ligne invalide, on ignore silencieusement pour simplifier */
     }
 
-    close(sockfd);
-
-    if (app->nb_services == 0) {
-        snprintf(errbuf, errlen,
-                 "Aucun service fourni par le serveur central.");
-        return FALSE;
-    }
-
+    close(sock);
     return TRUE;
 }
 
-/* =========================================================================
- *                          APPELS AUX SERVICES
- * ========================================================================= */
-
-/* --- Service DATE --- */
-static void do_service_date(AppWidgets *app) {
-    char err[256];
+/* ============================================================
+   Service implementations
+   ============================================================ */
+static void svc_date(AppWidgets *app) {
+    char err[256], buf[BUF_SIZE];
     int port = get_service_port(app, "DATE");
+
     if (port < 0) {
-        set_textview_text(app->textview_output,
-                          "[DATE] Service non disponible (port introuvable).");
+        set_text(app->textview_output, "[DATE] Service not available.");
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    int sockfd = connect_to_service(app->server_ip, port, err, sizeof(err));
-    if (sockfd < 0) {
-        set_textview_text(app->textview_output, err);
+    int sock = connect_to_service(app->server_ip, port, err, sizeof(err));
+    if (sock < 0) {
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    char buf[BUF_SIZE];
-    if (read_line_fd(sockfd, buf, sizeof(buf)) > 0) {
-        char out[BUF_SIZE + 64];
-        snprintf(out, sizeof(out), "[DATE] %s", buf);
-        set_textview_text(app->textview_output, out);
+    if (read_line_fd(sock, buf, sizeof(buf)) > 0) {
+        char out[BUF_SIZE + 32];
+        snprintf(out, sizeof(out), "[DATE] %s\n", buf);
+        set_text(app->textview_output, out);
     } else {
-        set_textview_text(app->textview_output,
-                          "[DATE] Erreur de lecture ou serveur fermé.");
+        set_text(app->textview_output, "[DATE] Connection closed.");
     }
 
-    close(sockfd);
+    close(sock);
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
 }
 
-/* --- Service LS --- */
-static void do_service_ls(AppWidgets *app) {
-    char err[256];
+static void svc_ls(AppWidgets *app) {
+    char err[256], buf[BUF_SIZE];
+
     int port = get_service_port(app, "LS");
     if (port < 0) {
-        set_textview_text(app->textview_output,
-                          "[LS] Service non disponible (port introuvable).");
+        set_text(app->textview_output, "[LS] Service not available.");
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    GtkWindow *parent =
-        GTK_WINDOW(gtk_widget_get_toplevel(app->stack));
-    gchar *dirpath = prompt_for_text(parent,
-                                     "Répertoire pour LS",
-                                     "Chemin du répertoire sur le serveur (laisser vide pour '.') :");
-    if (!dirpath) {
-        /* utilisateur a annulé */
-        return;
-    }
+    GtkWindow *parent = GTK_WINDOW(gtk_widget_get_toplevel(app->stack));
+    gchar *dir = prompt(parent, "Service LS",
+                        "Chemin du répertoire sur le serveur (vide = .)");
+    if (!dir) return;
 
-    int sockfd = connect_to_service(app->server_ip, port, err, sizeof(err));
-    if (sockfd < 0) {
-        set_textview_text(app->textview_output, err);
+    int sock = connect_to_service(app->server_ip, port, err, sizeof(err));
+    if (sock < 0) {
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-        g_free(dirpath);
+        g_free(dir);
         return;
     }
 
-    char buf[BUF_SIZE];
-    /* Envoi du chemin */
-    snprintf(buf, sizeof(buf), "%s\n", dirpath);
-    if (write(sockfd, buf, strlen(buf)) < 0) {
-        snprintf(err, sizeof(err),
-                 "[LS] Erreur d'envoi du chemin : %s", strerror(errno));
-        set_textview_text(app->textview_output, err);
-        close(sockfd);
+    snprintf(buf, sizeof(buf), "%s\n", dir);
+    if (write(sock, buf, strlen(buf)) < 0) {
+        snprintf(err, sizeof(err), "[LS] write failed: %s", strerror(errno));
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-        g_free(dirpath);
+        close(sock);
+        g_free(dir);
         return;
     }
 
-    /* Lecture de la liste */
-    GString *gs = g_string_new("[LS] Contenu du répertoire :\n");
+    GString *gs = g_string_new("[LS] Contenu du répertoire:\n");
 
     while (1) {
-        ssize_t n = read_line_fd(sockfd, buf, sizeof(buf));
-        if (n <= 0) {
-            g_string_append(gs, "\n[LS] Le serveur a fermé la connexion.\n");
-            break;
-        }
-
-        if (strcmp(buf, "END_LIST") == 0)
-            break;
-
+        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
+        if (n <= 0) break;
+        if (strcmp(buf, "END_LIST") == 0) break;
         g_string_append_printf(gs, "  %s\n", buf);
     }
 
-    set_textview_text(app->textview_output, gs->str);
+    set_text(app->textview_output, gs->str);
     g_string_free(gs, TRUE);
+    close(sock);
 
-    close(sockfd);
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-    g_free(dirpath);
+    g_free(dir);
 }
 
-/* --- Service CAT --- */
-/* --- Service CAT --- */
-static void do_service_cat(AppWidgets *app) {
-    char err[256];
+static void svc_cat(AppWidgets *app) {
+    char err[256], buf[BUF_SIZE];
+
     int port = get_service_port(app, "CAT");
     if (port < 0) {
-        set_textview_text(app->textview_output,
-                          "[CAT] Service non disponible (port introuvable).");
+        set_text(app->textview_output, "[CAT] Service not available.");
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    GtkWindow *parent =
-        GTK_WINDOW(gtk_widget_get_toplevel(app->stack));
-    gchar *filepath = prompt_for_text(parent,
-                                      "Fichier pour CAT",
-                                      "Chemin du fichier sur le serveur :");
-    if (!filepath) {
-        /* utilisateur a annulé */
-        return;
-    }
+    GtkWindow *parent = GTK_WINDOW(gtk_widget_get_toplevel(app->stack));
+    gchar *file = prompt(parent, "Service CAT",
+                         "Chemin du fichier sur le serveur:");
+    if (!file) return;
 
-    int sockfd = connect_to_service(app->server_ip, port, err, sizeof(err));
-    if (sockfd < 0) {
-        set_textview_text(app->textview_output, err);
+    int sock = connect_to_service(app->server_ip, port, err, sizeof(err));
+    if (sock < 0) {
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-        g_free(filepath);
+        g_free(file);
         return;
     }
 
-    char buf[BUF_SIZE];
-    /* Envoi du chemin du fichier */
-    snprintf(buf, sizeof(buf), "%s\n", filepath);
-    if (write(sockfd, buf, strlen(buf)) < 0) {
-        snprintf(err, sizeof(err),
-                 "[CAT] Erreur d'envoi du chemin : %s", strerror(errno));
-        set_textview_text(app->textview_output, err);
-        close(sockfd);
+    snprintf(buf, sizeof(buf), "%s\n", file);
+    if (write(sock, buf, strlen(buf)) < 0) {
+        snprintf(err, sizeof(err), "[CAT] write failed: %s", strerror(errno));
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-        g_free(filepath);
+        close(sock);
+        g_free(file);
         return;
     }
 
-    /* Lecture du contenu */
-    GString *gs = g_string_new("[CAT] Contenu du fichier :\n");
+    GString *gs = g_string_new("[CAT] Contenu du fichier:\n");
 
     while (1) {
-        ssize_t n = read_line_fd(sockfd, buf, sizeof(buf));
-        if (n <= 0) {
-            /* fin de connexion : on ne rajoute PAS de message */
-            break;
-        }
-
-        if (strcmp(buf, "EOF") == 0)
-            break;
-
+        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
+        if (n <= 0) break;
+        if (strcmp(buf, "EOF") == 0) break;
         g_string_append_printf(gs, "%s\n", buf);
     }
 
-    set_textview_text(app->textview_output, gs->str);
+    set_text(app->textview_output, gs->str);
     g_string_free(gs, TRUE);
 
-    close(sockfd);
+    close(sock);
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-    g_free(filepath);
+    g_free(file);
 }
 
+static void svc_duree(AppWidgets *app) {
+    char err[256], buf[BUF_SIZE];
 
-/* --- Service DUREE --- */
-static void do_service_duree(AppWidgets *app) {
-    char err[256];
     int port = get_service_port(app, "DUREE");
     if (port < 0) {
-        set_textview_text(app->textview_output,
-                          "[DUREE] Service non disponible (port introuvable).");
+        set_text(app->textview_output, "[DUREE] Service not available.");
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    if (app->session_start == (time_t)0) {
-        set_textview_text(app->textview_output,
-                          "[DUREE] Erreur : temps de début de session inconnu.");
+    int sock = connect_to_service(app->server_ip, port, err, sizeof(err));
+    if (sock < 0) {
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
         return;
     }
 
-    int sockfd = connect_to_service(app->server_ip, port, err, sizeof(err));
-    if (sockfd < 0) {
-        set_textview_text(app->textview_output, err);
-        gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
-        return;
-    }
-
-    char buf[BUF_SIZE];
     snprintf(buf, sizeof(buf), "%ld\n", (long)app->session_start);
-    if (write(sockfd, buf, strlen(buf)) < 0) {
-        snprintf(err, sizeof(err),
-                 "[DUREE] Erreur d'envoi du timestamp : %s", strerror(errno));
-        set_textview_text(app->textview_output, err);
-        close(sockfd);
+    if (write(sock, buf, strlen(buf)) < 0) {
+        snprintf(err, sizeof(err), "[DUREE] write failed: %s", strerror(errno));
+        set_text(app->textview_output, err);
         gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
+        close(sock);
         return;
     }
 
-    if (read_line_fd(sockfd, buf, sizeof(buf)) > 0) {
-        char out[BUF_SIZE + 64];
-        snprintf(out, sizeof(out), "[DUREE] %s", buf);
-        set_textview_text(app->textview_output, out);
+    if (read_line_fd(sock, buf, sizeof(buf)) > 0) {
+        char out[BUF_SIZE + 32];
+        snprintf(out, sizeof(out), "[DUREE] %s\n", buf);
+        set_text(app->textview_output, out);
     } else {
-        set_textview_text(app->textview_output,
-                          "[DUREE] Erreur de lecture ou serveur fermé.");
+        set_text(app->textview_output, "[DUREE] No response.");
     }
 
-    close(sockfd);
+    close(sock);
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_service");
 }
 
-/* =========================================================================
- *                                CALLBACKS GUI
- * ========================================================================= */
+/* ============================================================
+   QUIT BUTTON CALLBACK
+   ============================================================ */
+static void on_quit_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    GtkWidget *win = gtk_widget_get_toplevel(GTK_WIDGET(btn));
+    gtk_window_close(GTK_WINDOW(win));
+}
 
-static void on_login_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
+/* ============================================================
+   LOGIN CALLBACK
+   ============================================================ */
+static void on_login(GtkButton *btn, gpointer data) {
+    (void)btn;
+    AppWidgets *app = (AppWidgets*)data;
 
-    const char *ip     = gtk_entry_get_text(GTK_ENTRY(app->entry_ip));
-    const char *login  = gtk_entry_get_text(GTK_ENTRY(app->entry_login));
-    const char *passwd = gtk_entry_get_text(GTK_ENTRY(app->entry_password));
+    const char *ip  = gtk_entry_get_text(GTK_ENTRY(app->entry_ip));
+    const char *log = gtk_entry_get_text(GTK_ENTRY(app->entry_login));
+    const char *pwd = gtk_entry_get_text(GTK_ENTRY(app->entry_password));
 
-    if (ip[0] == '\0' || login[0] == '\0' || passwd[0] == '\0') {
+    if (!ip[0] || !log[0] || !pwd[0]) {
         gtk_label_set_text(GTK_LABEL(app->label_status),
-                           "Veuillez remplir IP, login et mot de passe.");
+                           "Veuillez remplir tous les champs.");
         return;
     }
 
     char err[256];
-    if (!central_auth_and_get_services(app, ip, login, passwd, err, sizeof(err))) {
+    if (!central_auth(app, ip, log, pwd, err, sizeof(err))) {
         gtk_label_set_text(GTK_LABEL(app->label_status), err);
         return;
     }
 
-    /* Mémoriser l'IP du serveur pour les services */
     if (app->server_ip)
         g_free(app->server_ip);
     app->server_ip = g_strdup(ip);
 
     gtk_label_set_text(GTK_LABEL(app->label_status),
-                       "Authentification réussie. Services chargés.");
+                       "Authentification OK.");
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_menu");
 }
 
-static void on_menu_date_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
-    do_service_date(app);
+/* ============================================================
+   MENU CALLBACKS
+   ============================================================ */
+static void on_svc_date(GtkButton *b, gpointer d){
+    (void)b;
+    svc_date((AppWidgets*)d);
+}
+static void on_svc_ls(GtkButton *b, gpointer d){
+    (void)b;
+    svc_ls((AppWidgets*)d);
+}
+static void on_svc_cat(GtkButton *b, gpointer d){
+    (void)b;
+    svc_cat((AppWidgets*)d);
+}
+static void on_svc_duree(GtkButton *b, gpointer d){
+    (void)b;
+    svc_duree((AppWidgets*)d);
 }
 
-static void on_menu_ls_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
-    do_service_ls(app);
-}
-
-static void on_menu_cat_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
-    do_service_cat(app);
-}
-
-static void on_menu_duree_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
-    do_service_duree(app);
-}
-
-static void on_back_to_menu_clicked(GtkButton *button, gpointer user_data) {
-    (void)button;
-    AppWidgets *app = (AppWidgets *)user_data;
-
+static void on_back(GtkButton *b, gpointer d) {
+    (void)b;
+    AppWidgets *app = (AppWidgets*)d;
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_menu");
 }
 
-/* =========================================================================
- *                      CONSTRUCTION DE L'INTERFACE
- * ========================================================================= */
+/* ============================================================
+   GTK UI CONSTRUCTION
+   ============================================================ */
+static void activate(GtkApplication *app, gpointer data) {
+    (void)data;
 
-static void activate(GtkApplication *app, gpointer user_data) {
-    (void)user_data;
+    AppWidgets *w = g_new0(AppWidgets, 1);
 
-    AppWidgets *widgets = g_new0(AppWidgets, 1);
+    GtkWidget *win = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(win),
+                         "Client Multi-Services (GTK)");
+    gtk_window_set_default_size(GTK_WINDOW(win), 600, 400);
 
-    GtkWidget *window =
-        gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(window), "Client Multiservices (GTK)");
-    gtk_window_set_default_size(GTK_WINDOW(window), 600, 400);
+    GtkWidget *v = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_add(GTK_CONTAINER(win), v);
 
-    // Conteneur vertical principal
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(window), vbox);
+    w->stack = gtk_stack_new();
+    gtk_box_pack_start(GTK_BOX(v), w->stack, TRUE, TRUE, 0);
 
-    // Stack SANS switcher (pas d'onglets visibles)
-    widgets->stack = gtk_stack_new();
-    gtk_stack_set_transition_type(GTK_STACK(widgets->stack),
-                                  GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
-    gtk_stack_set_transition_duration(GTK_STACK(widgets->stack), 250);
+    /* ===========================
+       PAGE LOGIN
+       =========================== */
+    GtkWidget *grid = gtk_grid_new();
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
 
-    gtk_box_pack_start(GTK_BOX(vbox), widgets->stack, TRUE, TRUE, 0);
+    w->entry_ip       = gtk_entry_new();
+    w->entry_login    = gtk_entry_new();
+    w->entry_password = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(w->entry_password), FALSE);
 
-    /* === Page 1 : Login === */
-    GtkWidget *grid_login = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid_login), 5);
-    gtk_grid_set_column_spacing(GTK_GRID(grid_login), 5);
-    gtk_container_set_border_width(GTK_CONTAINER(grid_login), 10);
-
-    GtkWidget *label_ip   = gtk_label_new("Adresse IP du serveur central :");
-    GtkWidget *label_user = gtk_label_new("Login :");
-    GtkWidget *label_pass = gtk_label_new("Mot de passe :");
-
-    widgets->entry_ip       = gtk_entry_new();
-    widgets->entry_login    = gtk_entry_new();
-    widgets->entry_password = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(widgets->entry_password), FALSE);
+    w->label_status = gtk_label_new("");
 
     GtkWidget *btn_login = gtk_button_new_with_label("Se connecter");
 
-    widgets->label_status = gtk_label_new("");
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("IP:"), 0,0,1,1);
+    gtk_grid_attach(GTK_GRID(grid), w->entry_ip,                         1,0,1,1);
 
-    gtk_grid_attach(GTK_GRID(grid_login), label_ip,   0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid_login), widgets->entry_ip, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Login:"),             0,1,1,1);
+    gtk_grid_attach(GTK_GRID(grid), w->entry_login,                      1,1,1,1);
 
-    gtk_grid_attach(GTK_GRID(grid_login), label_user, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid_login), widgets->entry_login, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Mot de passe:"),      0,2,1,1);
+    gtk_grid_attach(GTK_GRID(grid), w->entry_password,                   1,2,1,1);
 
-    gtk_grid_attach(GTK_GRID(grid_login), label_pass, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid_login), widgets->entry_password, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), btn_login,                           0,3,2,1);
+    gtk_grid_attach(GTK_GRID(grid), w->label_status,                     0,4,2,1);
 
-    gtk_grid_attach(GTK_GRID(grid_login), btn_login,  0, 3, 2, 1);
-    gtk_grid_attach(GTK_GRID(grid_login), widgets->label_status, 0, 4, 2, 1);
+    gtk_stack_add_titled(GTK_STACK(w->stack), grid, "page_login", "Login");
 
-    gtk_stack_add_titled(GTK_STACK(widgets->stack),
-                         grid_login,
-                         "page_login",
-                         "Login");
+    /* ===========================
+       PAGE MENU
+       =========================== */
+    GtkWidget *menu = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_set_border_width(GTK_CONTAINER(menu), 10);
 
-    /* === Page 2 : Menu des services === */
-    GtkWidget *box_menu = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_set_border_width(GTK_CONTAINER(box_menu), 10);
+    GtkWidget *btn_date  = gtk_button_new_with_label("1) DATE");
+    GtkWidget *btn_ls    = gtk_button_new_with_label("2) LS");
+    GtkWidget *btn_cat   = gtk_button_new_with_label("3) CAT");
+    GtkWidget *btn_duree = gtk_button_new_with_label("4) DUREE");
+    GtkWidget *btn_quit  = gtk_button_new_with_label("0) Quitter");
 
-    GtkWidget *label_menu = gtk_label_new("Menu des services :");
-    GtkWidget *btn_date   = gtk_button_new_with_label("Service 1 : DATE");
-    GtkWidget *btn_ls     = gtk_button_new_with_label("Service 2 : LS");
-    GtkWidget *btn_cat    = gtk_button_new_with_label("Service 3 : CAT");
-    GtkWidget *btn_duree  = gtk_button_new_with_label("Service 4 : DUREE");
+    gtk_box_pack_start(GTK_BOX(menu), gtk_label_new("Menu des services:"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu), btn_date,  FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu), btn_ls,    FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu), btn_cat,   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu), btn_duree, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(menu), btn_quit,  FALSE, FALSE, 0);
 
-    gtk_box_pack_start(GTK_BOX(box_menu), label_menu, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_menu), btn_date,   FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_menu), btn_ls,     FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_menu), btn_cat,    FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_menu), btn_duree,  FALSE, FALSE, 0);
+    gtk_stack_add_titled(GTK_STACK(w->stack), menu, "page_menu", "Menu");
 
-    gtk_stack_add_titled(GTK_STACK(widgets->stack),
-                         box_menu,
-                         "page_menu",
-                         "Menu");
+    /* ===========================
+       PAGE SERVICE
+       =========================== */
+    GtkWidget *svc = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_set_border_width(GTK_CONTAINER(svc), 10);
 
-    /* === Page 3 : Résultat d'un service === */
-    GtkWidget *box_service = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_set_border_width(GTK_CONTAINER(box_service), 10);
-
-    GtkWidget *label_service = gtk_label_new("Résultat du service :");
-    widgets->textview_output = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(widgets->textview_output), FALSE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(widgets->textview_output),
-                                GTK_WRAP_WORD_CHAR);
+    w->textview_output = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(w->textview_output), FALSE);
 
     GtkWidget *btn_back = gtk_button_new_with_label("Retour au menu");
 
-    gtk_box_pack_start(GTK_BOX(box_service), label_service, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_service), widgets->textview_output,
-                       TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(box_service), btn_back, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(svc), gtk_label_new("Résultat du service:"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(svc), w->textview_output, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(svc), btn_back, FALSE, FALSE, 0);
 
-    gtk_stack_add_titled(GTK_STACK(widgets->stack),
-                         box_service,
-                         "page_service",
-                         "Service");
+    gtk_stack_add_titled(GTK_STACK(w->stack), svc, "page_service", "Service");
 
-    /* Connexion des signaux */
-    g_signal_connect(btn_login, "clicked",
-                     G_CALLBACK(on_login_clicked), widgets);
+    /* CONNECT SIGNALS */
+    g_signal_connect(btn_login, "clicked", G_CALLBACK(on_login), w);
 
-    g_signal_connect(btn_date, "clicked",
-                     G_CALLBACK(on_menu_date_clicked), widgets);
-    g_signal_connect(btn_ls, "clicked",
-                     G_CALLBACK(on_menu_ls_clicked), widgets);
-    g_signal_connect(btn_cat, "clicked",
-                     G_CALLBACK(on_menu_cat_clicked), widgets);
-    g_signal_connect(btn_duree, "clicked",
-                     G_CALLBACK(on_menu_duree_clicked), widgets);
+    g_signal_connect(btn_date,  "clicked", G_CALLBACK(on_svc_date),  w);
+    g_signal_connect(btn_ls,    "clicked", G_CALLBACK(on_svc_ls),    w);
+    g_signal_connect(btn_cat,   "clicked", G_CALLBACK(on_svc_cat),   w);
+    g_signal_connect(btn_duree, "clicked", G_CALLBACK(on_svc_duree), w);
 
-    g_signal_connect(btn_back, "clicked",
-                     G_CALLBACK(on_back_to_menu_clicked), widgets);
+    g_signal_connect(btn_quit, "clicked", G_CALLBACK(on_quit_clicked), w);
 
-    // Page initiale : login uniquement
-    gtk_stack_set_visible_child_name(GTK_STACK(widgets->stack), "page_login");
+    g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back), w);
 
-    gtk_widget_show_all(window);
+    gtk_stack_set_visible_child_name(GTK_STACK(w->stack), "page_login");
+
+    gtk_widget_show_all(win);
 }
 
+/* ============================================================
+   main()
+   ============================================================ */
 int main(int argc, char *argv[]) {
-    GtkApplication *app;
-    int status;
+    GtkApplication *app =
+        gtk_application_new("org.example.multiservices.gui", G_APPLICATION_FLAGS_NONE);
 
-    app = gtk_application_new("org.example.clientGUI", G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
 
-    status = g_application_run(G_APPLICATION(app), argc, argv);
-    g_object_unref(app);
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
 
+    g_object_unref(app);
     return status;
 }
