@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +13,6 @@
 #include "services.h"
 
 #define BUF_SIZE   1024
-#define USERS_FILE "users.txt"
 
 #define PORT_CENTRAL 5000
 #define BACKLOG      5
@@ -23,7 +20,7 @@
 static void sigchld_handler(int sig) {
     (void)sig;
     while (waitpid(-1, NULL, WNOHANG) > 0) {
-        
+        // reap children
     }
 }
 
@@ -43,7 +40,7 @@ static void handle_client(int sockfd, struct sockaddr_in *cli_addr) {
         return;
     }
 
-    if (check_credentials(login, password, USERS_FILE)) {
+    if (check_credentials(login, password, USERS_FILE_PATH)) {
         write_ignore(sockfd, "OK\n", 3);
         printf("Authentification OK pour '%s'\n", login);
     } else {

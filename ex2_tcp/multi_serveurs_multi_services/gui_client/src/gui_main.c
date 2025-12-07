@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 #include <time.h>
 
+#include "services.h"
+
 #define BUF_SIZE     1024
 #define PORT_CENTRAL 5000
 #define MAX_SERVICES 10
@@ -40,38 +42,6 @@ typedef struct {
     time_t       session_start;
 
 } AppWidgets;
-
-/* ============================================================
-   read_line_fd — identical to previous version
-   ============================================================ */
-static ssize_t read_line_fd(int fd, char *buf, size_t maxlen) {
-    ssize_t n = 0;
-    char c;
-    ssize_t rc;
-
-    if (maxlen == 0) return -1;
-
-    while (n < (ssize_t)(maxlen - 1)) {
-        rc = read(fd, &c, 1);
-        if (rc == 1) {
-            buf[n++] = c;
-            if (c == '\n')
-                break;
-        } else if (rc == 0) {
-            if (n == 0) return 0;
-            break;
-        } else {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-    }
-
-    if (n > 0 && buf[n - 1] == '\n')
-        n--;
-
-    buf[n] = '\0';
-    return n;
-}
 
 /* ============================================================
    Connect to a service
@@ -199,7 +169,7 @@ static gboolean central_auth(AppWidgets *app,
     }
 
     /* Read response */
-    if (read_line_fd(sock, buf, sizeof(buf)) <= 0) {
+    if (read_line(sock, buf, sizeof(buf)) <= 0) {
         snprintf(err, errlen, "No response during authentication.");
         close(sock);
         return FALSE;
@@ -212,11 +182,11 @@ static gboolean central_auth(AppWidgets *app,
     }
 
     app->session_start = time(NULL);
-    app->nb_services = 0;
+    app->nb_services   = 0;
 
     /* Read service list */
     while (1) {
-        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
+        ssize_t n = read_line(sock, buf, sizeof(buf));
         if (n <= 0) {
             snprintf(err, errlen, "Connection closed while reading services.");
             close(sock);
@@ -268,7 +238,7 @@ static void svc_date(AppWidgets *app) {
         return;
     }
 
-    if (read_line_fd(sock, buf, sizeof(buf)) > 0) {
+    if (read_line(sock, buf, sizeof(buf)) > 0) {
         char out[BUF_SIZE + 32];
         snprintf(out, sizeof(out), "[DATE] %s\n", buf);
         set_text(app->textview_output, out);
@@ -316,7 +286,7 @@ static void svc_ls(AppWidgets *app) {
     GString *gs = g_string_new("[LS] Contenu du répertoire:\n");
 
     while (1) {
-        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
+        ssize_t n = read_line(sock, buf, sizeof(buf));
         if (n <= 0) break;
         if (strcmp(buf, "END_LIST") == 0) break;
         g_string_append_printf(gs, "  %s\n", buf);
@@ -366,7 +336,7 @@ static void svc_cat(AppWidgets *app) {
     GString *gs = g_string_new("[CAT] Contenu du fichier:\n");
 
     while (1) {
-        ssize_t n = read_line_fd(sock, buf, sizeof(buf));
+        ssize_t n = read_line(sock, buf, sizeof(buf));
         if (n <= 0) break;
         if (strcmp(buf, "EOF") == 0) break;
         g_string_append_printf(gs, "%s\n", buf);
@@ -406,7 +376,7 @@ static void svc_duree(AppWidgets *app) {
         return;
     }
 
-    if (read_line_fd(sock, buf, sizeof(buf)) > 0) {
+    if (read_line(sock, buf, sizeof(buf)) > 0) {
         char out[BUF_SIZE + 32];
         snprintf(out, sizeof(out), "[DUREE] %s\n", buf);
         set_text(app->textview_output, out);

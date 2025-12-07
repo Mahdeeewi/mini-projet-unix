@@ -4,8 +4,8 @@ CFLAGS  = -Wall -Wextra -O2 -I$(INC_DIR)
 
 # --- Directory Structure ---
 SRC_DIR        = src
-INC_DIR        = include
-COMMON_SRC_DIR = ../mono_serveur_client/src
+INC_DIR        = ../common/include
+COMMON_SRC     = ../common/src/services.c
 BIN_DIR        = bin
 
 # --- Executables ---
@@ -17,12 +17,12 @@ SERVEUR_CAT     = $(BIN_DIR)/serveur_cat
 SERVEUR_DUREE   = $(BIN_DIR)/serveur_duree
 
 # --- Sources ---
-CLIENT_SRC          = $(SRC_DIR)/clientTCP-multiservices.c $(COMMON_SRC_DIR)/services.c
-SERVEUR_CENTRAL_SRC = $(SRC_DIR)/serveur_central.c         $(COMMON_SRC_DIR)/services.c
-SERVEUR_DATE_SRC    = $(SRC_DIR)/serveur_date.c            $(COMMON_SRC_DIR)/services.c
-SERVEUR_LS_SRC      = $(SRC_DIR)/serveur_ls.c              $(COMMON_SRC_DIR)/services.c
-SERVEUR_CAT_SRC     = $(SRC_DIR)/serveur_cat.c             $(COMMON_SRC_DIR)/services.c
-SERVEUR_DUREE_SRC   = $(SRC_DIR)/serveur_duree.c           $(COMMON_SRC_DIR)/services.c
+CLIENT_SRC          = $(SRC_DIR)/clientTCP-multiservices.c $(COMMON_SRC)
+SERVEUR_CENTRAL_SRC = $(SRC_DIR)/serveur_central.c         $(COMMON_SRC)
+SERVEUR_DATE_SRC    = $(SRC_DIR)/serveur_date.c            $(COMMON_SRC)
+SERVEUR_LS_SRC      = $(SRC_DIR)/serveur_ls.c              $(COMMON_SRC)
+SERVEUR_CAT_SRC     = $(SRC_DIR)/serveur_cat.c             $(COMMON_SRC)
+SERVEUR_DUREE_SRC   = $(SRC_DIR)/serveur_duree.c           $(COMMON_SRC)
 
 # --- Build Rules ---
 all: $(CLIENT) $(SERVEUR_CENTRAL) $(SERVEUR_DATE) $(SERVEUR_LS) $(SERVEUR_CAT) $(SERVEUR_DUREE)
@@ -106,6 +106,7 @@ stop-all:
 # ============================================================================
 #                                  CLEAN
 # ============================================================================
+
 clean:
 	rm -rf $(BIN_DIR)
 	@echo ">>> Nettoyage complet effectué."
