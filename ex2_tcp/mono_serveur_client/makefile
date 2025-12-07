@@ -7,17 +7,20 @@ CFLAGS  = -Wall -Wextra -O2 -I$(INC_DIR)
 
 # --- Dossiers du projet ---
 SRC_DIR = src
-INC_DIR = include
+INC_DIR = ../common/include
 BIN_DIR = bin
+
+# Fichier source commun (implémentation des services)
+COMMON_SRC = ../common/src/services.c
 
 # --- Exécutables produits ---
 SERVER = $(BIN_DIR)/serveurTCP
 CLIENT = $(BIN_DIR)/clientTCP
 
 # --- Fichiers sources ---
-# Le serveur et le client utilisent services.c
-SERVER_SRC = $(SRC_DIR)/serveurTCP.c $(SRC_DIR)/services.c
-CLIENT_SRC = $(SRC_DIR)/clientTCP.c  $(SRC_DIR)/services.c
+# Le serveur et le client utilisent le même services.c commun
+SERVER_SRC = $(SRC_DIR)/serveurTCP.c $(COMMON_SRC)
+CLIENT_SRC = $(SRC_DIR)/clientTCP.c  $(COMMON_SRC)
 
 # ============================================================================
 #                                 RÈGLES PRINCIPALES
@@ -42,7 +45,6 @@ $(CLIENT): $(CLIENT_SRC)
 server: $(SERVER)
 client: $(CLIENT)
 
-
 # ============================================================================
 #                            Commandes d'exécution
 # ============================================================================
@@ -65,15 +67,13 @@ run-clientTCP: client
 	@echo ">>> Exécution du client TCP -> connexion à $(IP):$(PORT)..."
 	@$(CLIENT) $(IP) $(PORT)
 
-
 # ============================================================================
 #                                  NETTOYAGE
 # ============================================================================
 
-# Suppression des exécutables et objets
+# Suppression des exécutables
 clean:
 	rm -rf $(BIN_DIR)
 	@echo ">>> Nettoyage effectué."
 
 .PHONY: all server client clean run-serveurTCP run-clientTCP
-

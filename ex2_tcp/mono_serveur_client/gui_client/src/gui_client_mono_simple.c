@@ -1,4 +1,3 @@
-
 #include <gtk/gtk.h>
 
 #include <stdio.h>
@@ -10,6 +9,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#include "services.h"   /* <- use shared read_line(), write_ignore, etc. */
 
 #define BUF_SIZE 1024
 
@@ -30,38 +31,6 @@ typedef struct {
 /* =========================================================================
  *                       FONCTIONS UTILITAIRES RÉSEAU
  * ========================================================================= */
-
-/* Lecture d'une ligne terminée par '\n' (sans inclure le '\n' dans buf) */
-static ssize_t read_line_fd(int fd, char *buf, size_t maxlen) {
-    ssize_t n = 0;
-    char c;
-    ssize_t rc;
-
-    if (maxlen == 0) return -1;
-
-    while (n < (ssize_t)(maxlen - 1)) {
-        rc = read(fd, &c, 1);
-        if (rc == 1) {
-            buf[n++] = c;
-            if (c == '\n')
-                break;
-        } else if (rc == 0) {
-            if (n == 0)
-                return 0;  /* EOF sans rien lire */
-            break;
-        } else {
-            if (errno == EINTR)
-                continue;
-            return -1;
-        }
-    }
-
-    if (n > 0 && buf[n - 1] == '\n')
-        n--;
-
-    buf[n] = '\0';
-    return n;
-}
 
 /* Connexion au serveur (IP + port) */
 static int connect_to_server(const char *ip, int port, char *errbuf, size_t errlen) {
@@ -172,7 +141,7 @@ static void do_service_date(AppWidgets *app) {
         return;
     }
 
-    if (read_line_fd(app->sockfd, buf, sizeof(buf)) <= 0) {
+    if (read_line(app->sockfd, buf, sizeof(buf)) <= 0) {
         set_textview_text(app->textview_output,
                           "[DATE] Erreur de lecture ou connexion fermée.");
     } else {
@@ -219,7 +188,7 @@ static void do_service_ls(AppWidgets *app) {
     GString *gs = g_string_new("[LS] Contenu du répertoire :\n");
 
     while (1) {
-        ssize_t n = read_line_fd(app->sockfd, buf, sizeof(buf));
+        ssize_t n = read_line(app->sockfd, buf, sizeof(buf));
         if (n <= 0) {
             g_string_append(gs, "\n[LS] Connexion fermée ou erreur.\n");
             break;
@@ -278,7 +247,7 @@ static void do_service_cat(AppWidgets *app) {
     GString *gs = g_string_new("[CAT] Contenu du fichier :\n");
 
     while (1) {
-        ssize_t n = read_line_fd(app->sockfd, buf, sizeof(buf));
+        ssize_t n = read_line(app->sockfd, buf, sizeof(buf));
         if (n <= 0) {
             break; /* fin de connexion ou erreur => on arrête de lire */
         }
@@ -312,7 +281,7 @@ static void do_service_duree(AppWidgets *app) {
         return;
     }
 
-    if (read_line_fd(app->sockfd, buf, sizeof(buf)) <= 0) {
+    if (read_line(app->sockfd, buf, sizeof(buf)) <= 0) {
         set_textview_text(app->textview_output,
                           "[DUREE] Erreur de lecture ou connexion fermée.");
     } else {
@@ -393,7 +362,7 @@ static void on_login_clicked(GtkButton *button, gpointer user_data) {
     }
 
     /* Lecture OK / ERR */
-    if (read_line_fd(app->sockfd, buf, sizeof(buf)) <= 0) {
+    if (read_line(app->sockfd, buf, sizeof(buf)) <= 0) {
         gtk_label_set_text(GTK_LABEL(app->label_status),
                            "Pas de réponse du serveur pendant l'authentification.");
         send_quit_and_close(app);
@@ -444,20 +413,16 @@ static void on_back_to_menu_clicked(GtkButton *button, gpointer user_data) {
     gtk_stack_set_visible_child_name(GTK_STACK(app->stack), "page_menu");
 }
 
-/* Bouton "Quitter" dans le menu : envoie choix 0 + retour à la page login */
-/* Bouton "Quitter" dans le menu : envoie choix 0 puis quitte complètement le GUI */
+/* Bouton "Quitter" : envoie choix 0 puis ferme la fenêtre */
 static void on_quit_session_clicked(GtkButton *button, gpointer user_data) {
     (void)button;
     AppWidgets *app = (AppWidgets *)user_data;
 
-    /* Envoie "0\n" au serveur et ferme la socket */
     send_quit_and_close(app);
 
-    /* Ferme la fenêtre principale => termine l'application */
     GtkWidget *win = gtk_widget_get_toplevel(app->stack);
     gtk_window_close(GTK_WINDOW(win));
 }
-
 
 /* =========================================================================
  *                     CONSTRUCTION DE L'INTERFACE GTK

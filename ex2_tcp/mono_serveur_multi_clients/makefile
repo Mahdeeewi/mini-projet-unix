@@ -1,22 +1,23 @@
 # --- Compilateur et options ---
 CC      = gcc
-CFLAGS  = -Wall -Wextra -O2 -I$(INC_DIR_1)
-# -I$(INC_DIR_1) permet de réutiliser les headers de la partie 1 (services.h)
 
 # --- Dossiers du projet ---
-SRC_DIR_2 = src
-INC_DIR_1 = ../mono_serveur_client/include
-SRC_DIR_1 = ../mono_serveur_client/src
-BIN_DIR   = bin
+SRC_DIR = src
+INC_DIR = ../common/include
+BIN_DIR = bin
+
+CFLAGS  = -Wall -Wextra -O2 -I$(INC_DIR)
+
+# Fichier source commun (implémentation des services)
+COMMON_SRC = ../common/src/services.c
 
 # --- Exécutables produits ---
 SERVER = $(BIN_DIR)/serveurTCP-multi
 CLIENT = $(BIN_DIR)/clientTCP-multi
 
 # --- Fichiers sources ---
-# Le serveur et le client réutilisent services.c de la partie 1
-SERVER_SRC = $(SRC_DIR_2)/serveurTCP-multi.c $(SRC_DIR_1)/services.c
-CLIENT_SRC = $(SRC_DIR_2)/clientTCP-multi.c  $(SRC_DIR_1)/services.c
+SERVER_SRC = $(SRC_DIR)/serveurTCP-multi.c $(COMMON_SRC)
+CLIENT_SRC = $(SRC_DIR)/clientTCP-multi.c  $(COMMON_SRC)
 
 # ============================================================================
 #                                 RÈGLES PRINCIPALES
@@ -43,7 +44,6 @@ client: $(CLIENT)
 #                            Commandes d'exécution
 # ============================================================================
 
-
 run-serveurTCP-multi: server
 	@if [ -z "$(PORT)" ]; then \
 		echo "Utilisation : make run-serveurTCP-multi PORT=<port>"; \
@@ -51,7 +51,6 @@ run-serveurTCP-multi: server
 	fi
 	@echo ">>> Exécution du serveur TCP multi-client sur le port $(PORT)..."
 	@$(SERVER) $(PORT)
-
 
 run-clientTCP-multi: client
 	@if [ -z "$(IP)" ] || [ -z "$(PORT)" ]; then \

@@ -12,7 +12,7 @@
 #include "services.h"
 
 #define BUF_SIZE   1024
-#define USERS_FILE "users.txt"
+/* Plus de #define USERS_FILE ici : on utilise USERS_FILE_PATH défini dans services.h */
 
 /*----------------------------------------------------------------------------
  * serveurTCP
@@ -114,7 +114,8 @@ int main(int argc, char *argv[]) {
 
     printf("Tentative de connexion avec login='%s'\n", login);
 
-    if (check_credentials(login, password, USERS_FILE)) {
+    /* Utilise maintenant USERS_FILE_PATH défini dans services.h */
+    if (check_credentials(login, password, USERS_FILE_PATH)) {
         if (write(newsockfd, "OK\n", 3) < 0) {
             perror("write (OK)");
             close(newsockfd);
@@ -184,4 +185,3 @@ fin:
     printf("Serveur arrêté.\n");
     return 0;
 }
-

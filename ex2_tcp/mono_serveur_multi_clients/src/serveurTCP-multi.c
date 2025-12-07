@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +14,6 @@
 #include "services.h"  
 
 #define BUF_SIZE   1024
-#define USERS_FILE "users.txt"   
 
 /*----------------------------------------------------------------------------
  * Handler SIGCHLD pour éviter les processus zombies
@@ -58,7 +55,7 @@ static void handle_client(int newsockfd, struct sockaddr_in *cli_addr) {
 
     printf("Tentative de connexion avec login='%s'\n", login);
 
-    if (check_credentials(login, password, USERS_FILE)) {
+    if (check_credentials(login, password, USERS_FILE_PATH)) {
         if (write(newsockfd, "OK\n", 3) < 0) {
             perror("write (OK)");
             close(newsockfd);
@@ -228,4 +225,3 @@ int main(int argc, char *argv[]) {
     printf("Serveur arrêté.\n");
     return 0;
 }
-

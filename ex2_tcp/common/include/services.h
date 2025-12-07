@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <time.h>
 
+#define USERS_FILE_PATH "../common/users.txt"
+
 /*----------------------------------------------------------------------------
  * write_ignore
  *  Petite fonction utilitaire qui encapsule write().
